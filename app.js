@@ -2,6 +2,8 @@ const state = {
   fileHandle: null,
   fileName: "",
   originalText: "",
+  roots: [],
+  activeRootId: null,
   header: null,
   tools: [],
   expressions: [],
@@ -13,7 +15,16 @@ const state = {
   replaceSelectedIds: new Set(),
 };
 
+let expressionEditorView = null;
+let fallbackExpressionTextarea = null;
+let fallbackOpenInput = null;
+let editorUpdateLocked = false;
+
 const els = {
+  structureBar: document.querySelector("#structureBar"),
+  structureResizer: document.querySelector("#structureResizer"),
+  structureSummary: document.querySelector("#structureSummary"),
+  structureList: document.querySelector("#structureList"),
   headerTabBtn: document.querySelector("#headerTabBtn"),
   toolsTabBtn: document.querySelector("#toolsTabBtn"),
   headerView: document.querySelector("#headerView"),
@@ -64,15 +75,67 @@ els.replaceFindInput.addEventListener("input", renderList);
 els.selectVisibleBtn.addEventListener("click", selectVisibleForReplace);
 els.clearSelectionBtn.addEventListener("click", clearReplaceSelection);
 els.applyReplaceBtn.addEventListener("click", applyReplace);
-els.expressionEditor.addEventListener("input", updateSelectedExpression);
-els.expressionEditor.addEventListener("keydown", handleEditorKeydown);
 els.revertBtn.addEventListener("click", revertSelectedExpression);
 
-if (!("showOpenFilePicker" in window)) {
-  els.openPickerBtn.hidden = true;
+setupStructureResizer();
+setupExpressionEditor();
+
+window.addEventListener("error", (event) => {
+  els.fileStatus.textContent = `Script error: ${event.message}`;
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  els.fileStatus.textContent = `Script error: ${event.reason?.message ?? event.reason}`;
+});
+
+function setupStructureResizer() {
+  const savedWidth = Number(localStorage.getItem("structurePanelWidth"));
+  if (savedWidth) {
+    setStructurePanelWidth(savedWidth);
+  }
+
+  let dragging = false;
+
+  const stopDragging = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing-structure");
+    if (els.structureResizer.hasPointerCapture(event.pointerId)) {
+      els.structureResizer.releasePointerCapture(event.pointerId);
+    }
+    localStorage.setItem("structurePanelWidth", String(currentStructurePanelWidth()));
+  };
+
+  els.structureResizer.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    document.body.classList.add("resizing-structure");
+    els.structureResizer.setPointerCapture(event.pointerId);
+  });
+
+  els.structureResizer.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    setStructurePanelWidth(event.clientX);
+  });
+
+  els.structureResizer.addEventListener("pointerup", stopDragging);
+  els.structureResizer.addEventListener("pointercancel", stopDragging);
+}
+
+function setStructurePanelWidth(width) {
+  const clamped = Math.max(160, Math.min(420, width));
+  document.documentElement.style.setProperty("--structure-width", `${clamped}px`);
+}
+
+function currentStructurePanelWidth() {
+  return els.structureBar.getBoundingClientRect().width;
 }
 
 async function openWithPicker() {
+  if (!("showOpenFilePicker" in window)) {
+    openWithFileInputFallback();
+    return;
+  }
+
   try {
     const [handle] = await window.showOpenFilePicker({
       multiple: false,
@@ -94,8 +157,33 @@ async function openWithPicker() {
   }
 }
 
+function openWithFileInputFallback() {
+  if (!fallbackOpenInput) {
+    fallbackOpenInput = document.createElement("input");
+    fallbackOpenInput.type = "file";
+    fallbackOpenInput.accept = ".setting,.comp,.txt";
+    fallbackOpenInput.hidden = true;
+    fallbackOpenInput.addEventListener("change", async () => {
+      const [file] = fallbackOpenInput.files;
+      if (!file) return;
+
+      state.fileHandle = null;
+      await loadDocumentText(await file.text(), file.name);
+      fallbackOpenInput.value = "";
+    });
+    document.body.append(fallbackOpenInput);
+  }
+
+  fallbackOpenInput.click();
+}
+
 async function openFromClipboard() {
   try {
+    if (!navigator.clipboard?.readText) {
+      openManualPasteDialog();
+      return;
+    }
+
     const text = await navigator.clipboard.readText();
     if (!text.trim()) {
       els.fileStatus.textContent = "Clipboard is empty.";
@@ -105,8 +193,46 @@ async function openFromClipboard() {
     state.fileHandle = null;
     await loadDocumentText(text, "clipboard.setting");
   } catch (error) {
-    els.fileStatus.textContent = `Could not read clipboard: ${error.message}`;
+    openManualPasteDialog(error.message);
   }
+}
+
+function openManualPasteDialog(reason = "") {
+  const existing = document.querySelector(".manual-paste");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "manual-paste";
+  overlay.innerHTML = `
+    <div class="manual-paste-dialog">
+      <div class="manual-paste-head">
+        <strong>Paste setting text</strong>
+        <button type="button" data-action="close">Close</button>
+      </div>
+      ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
+      <textarea spellcheck="false" placeholder="Paste Fusion .setting text here"></textarea>
+      <div class="manual-paste-actions">
+        <button type="button" data-action="load">Load text</button>
+      </div>
+    </div>
+  `;
+
+  const textarea = overlay.querySelector("textarea");
+  overlay.querySelector("[data-action='close']").addEventListener("click", () => overlay.remove());
+  overlay.querySelector("[data-action='load']").addEventListener("click", async () => {
+    const text = textarea.value;
+    if (!text.trim()) {
+      els.fileStatus.textContent = "Paste text before loading.";
+      return;
+    }
+
+    state.fileHandle = null;
+    await loadDocumentText(text, "clipboard.setting");
+    overlay.remove();
+  });
+
+  document.body.append(overlay);
+  textarea.focus();
 }
 
 async function loadDocumentText(text, fileName) {
@@ -114,11 +240,13 @@ async function loadDocumentText(text, fileName) {
 
   state.fileName = fileName;
   state.originalText = text;
-  state.header = documentData.header;
+  state.roots = documentData.roots;
   state.tools = documentData.tools;
   state.expressions = documentData.expressions;
+  state.activeRootId = state.roots[0]?.id ?? null;
+  syncActiveRoot();
   state.selectedId = toolExpressions()[0]?.id ?? null;
-  state.expandedTools = new Set(state.tools.map((tool) => tool.name));
+  state.expandedTools = new Set(activeTools().map((tool) => tool.name));
   state.activeTab = state.header ? "header" : "tools";
   state.replaceMode = false;
   state.replaceSelectedIds = new Set();
@@ -128,8 +256,9 @@ async function loadDocumentText(text, fileName) {
   els.saveBtn.disabled = false;
   els.downloadBtn.disabled = false;
   els.copyBtn.disabled = false;
-  els.fileStatus.textContent = fileStatusText(fileName, state.header, state.tools.length, state.expressions.length);
+  els.fileStatus.textContent = fileStatusText(fileName, state.header, activeTools().length, toolExpressions().length);
 
+  renderStructure();
   renderTabs();
   renderReplacePanel();
   renderHeader();
@@ -140,10 +269,10 @@ async function loadDocumentText(text, fileName) {
 function parseFusionDocument(text) {
   const tokens = tokenizeFusion(text);
   const stack = [];
+  const roots = [];
   const tools = [];
-  const toolsByName = new Map();
+  const toolsByKey = new Map();
   const expressions = [];
-  const headerItems = { Inputs: [], Outputs: [] };
   let header = null;
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -152,28 +281,70 @@ function parseFusionDocument(text) {
     if (token.type === "{") {
       const context = contextFromOpeningBrace(tokens, i);
       const parentSection = lastStackItem(stack, "section");
+      const parentRoot = lastRootItem(stack);
 
-      if (context.kind === "header" && !header) {
-        header = {
+      if (context.kind === "header" && !parentRoot) {
+        const root = {
+          id: roots.length,
+          name: context.name,
+          toolType: context.toolType,
+          kind: "container",
+          line: lineAt(text, token.start),
+          header: null,
+          sourceOps: [],
+        };
+        const headerData = {
+          rootId: root.id,
           name: context.name,
           operatorType: context.toolType,
           originalOperatorType: context.toolType,
           typeStart: context.typeStart,
           typeEnd: context.typeEnd,
-          inputs: headerItems.Inputs,
-          outputs: headerItems.Outputs,
+          inputs: [],
+          outputs: [],
         };
-      } else if (context.kind === "tool" && !toolsByName.has(context.name)) {
+        root.header = headerData;
+        roots.push(root);
+        context.rootId = root.id;
+        context.header = headerData;
+        header = header ?? headerData;
+      } else if (context.kind === "tool") {
+        if (!parentRoot) {
+          const root = {
+            id: roots.length,
+            name: context.name,
+            toolType: context.toolType,
+            kind: "tool",
+            line: lineAt(text, token.start),
+            header: null,
+            sourceOps: parseToolSourceOps(tokens, i),
+          };
+          roots.push(root);
+          context.rootId = root.id;
+        } else {
+          context.rootId = parentRoot.rootId;
+        }
+
+        const toolKey = `${context.rootId}:${context.name}`;
+        if (toolsByKey.has(toolKey)) {
+          stack.push(context);
+          continue;
+        }
+
         const tool = {
           id: tools.length,
+          rootId: context.rootId,
           name: context.name,
           toolType: context.toolType,
           line: lineAt(text, token.start),
+          sourceOps: parseToolSourceOps(tokens, i),
         };
         tools.push(tool);
-        toolsByName.set(tool.name, tool);
+        toolsByKey.set(toolKey, tool);
       } else if (context.kind === "headerItem" && parentSection) {
-        headerItems[parentSection.name]?.push(parseHeaderItem(text, tokens, i, context, parentSection.name));
+        const ownerHeader = lastStackItem(stack, "header")?.header;
+        const target = parentSection.name === "Inputs" ? ownerHeader?.inputs : ownerHeader?.outputs;
+        target?.push(parseHeaderItem(text, tokens, i, context, parentSection.name));
       }
 
       stack.push(context);
@@ -198,6 +369,7 @@ function parseFusionDocument(text) {
 
       expressions.push({
         id: expressions.length,
+        rootId: tool?.rootId ?? "",
         toolId: tool?.name ?? "",
         toolName: tool?.name ?? "Tool desconocido",
         toolType: tool?.toolType ?? "",
@@ -211,7 +383,7 @@ function parseFusionDocument(text) {
     }
   }
 
-  return { header, tools, expressions };
+  return { roots, header, tools, expressions };
 }
 
 function parseFusionExpressions(text) {
@@ -357,7 +529,7 @@ function contextFromOpeningBrace(tokens, braceIndex) {
       };
     }
 
-    if (!["FuID", "OperatorInfo"].includes(prev.token.value)) {
+    if (!["FuID", "OperatorInfo", "GroupInfo"].includes(prev.token.value)) {
       return { kind: "tool", name: nameToken.token.value, toolType: prev.token.value };
     }
   }
@@ -457,6 +629,28 @@ function parseHeaderItem(text, tokens, braceIndex, context, sectionName) {
   };
 }
 
+function parseToolSourceOps(tokens, braceIndex) {
+  const endIndex = findMatchingBraceToken(tokens, braceIndex);
+  const sourceOps = new Set();
+  let depth = 0;
+
+  for (let i = braceIndex + 1; i < endIndex; i += 1) {
+    if (
+      tokens[i]?.type === "id" &&
+      tokens[i].value === "SourceOp" &&
+      tokens[i + 1]?.type === "=" &&
+      tokens[i + 2]?.type === "string"
+    ) {
+      sourceOps.add(decodeFusionString(tokens[i + 2].raw));
+    }
+
+    if (tokens[i].type === "{") depth += 1;
+    if (tokens[i].type === "}") depth -= 1;
+  }
+
+  return [...sourceOps];
+}
+
 function findMatchingBraceToken(tokens, openIndex) {
   let depth = 0;
   for (let i = openIndex; i < tokens.length; i += 1) {
@@ -484,6 +678,13 @@ function previousSignificant(tokens, fromIndex) {
     if (tokens[i]) return { token: tokens[i], index: i };
   }
   return { token: null, index: -1 };
+}
+
+function lastRootItem(stack) {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    if (stack[i].rootId !== undefined && stack[i].rootId !== null) return stack[i];
+  }
+  return null;
 }
 
 function lastStackItem(stack, kind) {
@@ -517,11 +718,104 @@ function lineAt(text, index) {
   return line;
 }
 
+function activeRoot() {
+  return state.roots.find((root) => root.id === state.activeRootId) ?? null;
+}
+
+function syncActiveRoot() {
+  const root = activeRoot();
+  state.header = root?.header ?? null;
+}
+
+function activeTools() {
+  return state.tools.filter((tool) => tool.rootId === state.activeRootId);
+}
+
+function renderStructure() {
+  els.structureList.innerHTML = "";
+  els.structureSummary.textContent = state.roots.length
+    ? `${state.roots.length} root node${state.roots.length === 1 ? "" : "s"}`
+    : "No nodes loaded";
+
+  const tree = buildStructureTree();
+  for (const root of tree.topRoots) {
+    renderStructureNode(root, tree.childrenByParent, 0, new Set());
+  }
+}
+
+function buildStructureTree() {
+  const rootsByName = new Map(state.roots.map((root) => [root.name, root]));
+  const childrenByParent = new Map();
+  const rootsWithParents = new Set();
+
+  for (const root of state.roots) {
+    const parentNames = (root.sourceOps ?? []).filter((sourceOp) => rootsByName.has(sourceOp));
+    for (const parentName of parentNames) {
+      if (!childrenByParent.has(parentName)) {
+        childrenByParent.set(parentName, []);
+      }
+      childrenByParent.get(parentName).push(root);
+      rootsWithParents.add(root.name);
+    }
+  }
+
+  const topRoots = state.roots.filter((root) => !rootsWithParents.has(root.name));
+  return {
+    childrenByParent,
+    topRoots: topRoots.length ? topRoots : state.roots,
+  };
+}
+
+function renderStructureNode(root, childrenByParent, level, path) {
+  if (path.has(root.name)) return;
+
+  const expressionCount = state.expressions.filter((item) => item.rootId === root.id).length;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = [
+    "structure-item",
+    root.id === state.activeRootId ? "active" : "",
+    expressionCount > 0 ? "has-expressions" : "no-expressions",
+  ].filter(Boolean).join(" ");
+  button.style.setProperty("--tree-level", String(level));
+  button.addEventListener("click", () => selectRoot(root.id));
+  button.innerHTML = `
+    <span class="structure-node-main">
+      <strong>${escapeHtml(root.name)}</strong>
+      <span class="structure-count">${expressionCount}</span>
+    </span>
+    <span class="structure-node-type">${escapeHtml(root.toolType)}</span>
+  `;
+  els.structureList.append(button);
+
+  const nextPath = new Set(path);
+  nextPath.add(root.name);
+  for (const child of childrenByParent.get(root.name) ?? []) {
+    renderStructureNode(child, childrenByParent, level + 1, nextPath);
+  }
+}
+
+function selectRoot(rootId) {
+  state.activeRootId = rootId;
+  syncActiveRoot();
+  state.activeTab = state.header ? "header" : "tools";
+  state.selectedId = toolExpressions()[0]?.id ?? null;
+  state.expandedTools = new Set(activeTools().map((tool) => tool.name));
+  state.replaceSelectedIds.clear();
+  els.fileStatus.textContent = fileStatusText(state.fileName, state.header, activeTools().length, toolExpressions().length);
+
+  renderStructure();
+  renderTabs();
+  renderHeader();
+  renderList();
+  renderEditor();
+}
+
 function renderList() {
   const query = els.searchInput.value.trim().toLowerCase();
   const replaceFind = els.replaceFindInput.value;
   const expressionsByTool = toolExpressions();
-  const visibleTools = state.tools
+  const visibleTools = activeTools()
     .map((tool) => {
       const expressions = expressionsByTool.filter((item) => item.toolId === tool.name);
       const toolMatches = `${tool.name} ${tool.toolType}`.toLowerCase().includes(query);
@@ -560,8 +854,11 @@ function renderList() {
     header.innerHTML = `
       <span class="tree-arrow">${isToolExpanded(group.tool.name) ? "v" : ">"}</span>
       <span class="tool-title">
-        <strong>${escapeHtml(group.tool.name)}</strong>
-        <span>${escapeHtml(group.tool.toolType)} · ${group.expressions.length} expressions</span>
+        <span class="tool-main">
+          <strong>${escapeHtml(group.tool.name)}</strong>
+          <span class="tool-count">${group.expressions.length}</span>
+        </span>
+        <span class="tool-meta">${escapeHtml(group.tool.toolType)}</span>
       </span>
       ${changedCount ? `<span class="tool-changed">${changedCount}</span>` : ""}
     `;
@@ -791,6 +1088,86 @@ function selectExpression(id) {
   renderEditor();
 }
 
+async function setupExpressionEditor() {
+  try {
+    const [
+      stateModule,
+      commandsModule,
+      languageModule,
+      viewModule,
+      luaModule,
+    ] = await Promise.all([
+      import("https://esm.sh/@codemirror/state@6"),
+      import("https://esm.sh/@codemirror/commands@6"),
+      import("https://esm.sh/@codemirror/language@6"),
+      import("https://esm.sh/@codemirror/view@6"),
+      import("https://esm.sh/@codemirror/legacy-modes/mode/lua"),
+    ]);
+
+    const { EditorState } = stateModule;
+    const { defaultKeymap, history, historyKeymap, indentWithTab } = commandsModule;
+    const { StreamLanguage, defaultHighlightStyle, syntaxHighlighting } = languageModule;
+    const { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } = viewModule;
+    const { lua } = luaModule;
+
+    expressionEditorView = new EditorView({
+      parent: els.expressionEditor,
+      state: EditorState.create({
+        doc: "",
+        extensions: [
+          lineNumbers(),
+          history(),
+          drawSelection(),
+          highlightActiveLine(),
+          StreamLanguage.define(lua),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          EditorView.lineWrapping,
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged || editorUpdateLocked) return;
+            updateSelectedExpression(update.state.doc.toString());
+          }),
+        ],
+      }),
+    });
+    renderEditor();
+  } catch (error) {
+    setupFallbackExpressionEditor();
+    renderEditor();
+    console.warn("CodeMirror unavailable; using plain text editor.", error);
+  }
+}
+
+function setupFallbackExpressionEditor() {
+  fallbackExpressionTextarea = document.createElement("textarea");
+  fallbackExpressionTextarea.className = "plain-expression-editor";
+  fallbackExpressionTextarea.spellcheck = false;
+  fallbackExpressionTextarea.addEventListener("input", () => {
+    if (editorUpdateLocked) return;
+    updateSelectedExpression(fallbackExpressionTextarea.value);
+  });
+  fallbackExpressionTextarea.addEventListener("keydown", handleFallbackEditorKeydown);
+  els.expressionEditor.replaceChildren(fallbackExpressionTextarea);
+}
+
+function setEditorValue(value) {
+  editorUpdateLocked = true;
+
+  if (expressionEditorView) {
+    expressionEditorView.dispatch({
+      changes: {
+        from: 0,
+        to: expressionEditorView.state.doc.length,
+        insert: value,
+      },
+    });
+  } else if (fallbackExpressionTextarea) {
+    fallbackExpressionTextarea.value = value;
+  }
+
+  editorUpdateLocked = false;
+}
+
 function renderEditor() {
   const item = selectedExpression();
   els.emptyState.hidden = Boolean(item);
@@ -800,17 +1177,17 @@ function renderEditor() {
 
   els.toolName.textContent = `${item.toolName}${item.toolType ? ` · ${item.toolType}` : ""}`;
   els.inputName.textContent = item.inputName;
-  els.expressionEditor.value = item.current;
+  setEditorValue(item.current);
   els.originalExpressionViewer.textContent = item.original;
   els.dirtyBadge.hidden = !isChanged(item);
   els.lineInfo.textContent = `Line ${item.line}`;
 }
 
-function updateSelectedExpression() {
+function updateSelectedExpression(value) {
   const item = selectedExpression();
   if (!item) return;
 
-  item.current = els.expressionEditor.value;
+  item.current = value;
   els.dirtyBadge.hidden = !isChanged(item);
   renderList();
 }
@@ -829,7 +1206,9 @@ function selectedExpression() {
 }
 
 function toolExpressions() {
-  return state.expressions.filter((item) => item.toolId && item.toolName !== "Tool desconocido");
+  return state.expressions.filter((item) => {
+    return item.rootId === state.activeRootId && item.toolId && item.toolName !== "Tool desconocido";
+  });
 }
 
 function isChanged(item) {
@@ -857,26 +1236,29 @@ function buildUpdatedText() {
 }
 
 function headerReplacements() {
-  const header = state.header;
-  if (!header) return [];
-
   const replacements = [];
-  if (header.operatorType !== header.originalOperatorType) {
-    replacements.push({
-      start: header.typeStart,
-      end: header.typeEnd,
-      value: header.operatorType,
-    });
-  }
 
-  for (const item of [...header.inputs, ...header.outputs]) {
-    for (const field of item.fields) {
-      if (field.editable && field.current !== field.value) {
-        replacements.push({
-          start: field.valueStart,
-          end: field.valueEnd,
-          value: encodeFusionString(field.current),
-        });
+  for (const root of state.roots) {
+    const header = root.header;
+    if (!header) continue;
+
+    if (header.operatorType !== header.originalOperatorType) {
+      replacements.push({
+        start: header.typeStart,
+        end: header.typeEnd,
+        value: header.operatorType,
+      });
+    }
+
+    for (const item of [...header.inputs, ...header.outputs]) {
+      for (const field of item.fields) {
+        if (field.editable && field.current !== field.value) {
+          replacements.push({
+            start: field.valueStart,
+            end: field.valueEnd,
+            value: encodeFusionString(field.current),
+          });
+        }
       }
     }
   }
@@ -935,7 +1317,7 @@ async function downloadFile() {
 async function copyFileToClipboard() {
   try {
     await navigator.clipboard.writeText(buildUpdatedText());
-    els.fileStatus.textContent = `copied · ${fileStatusText(state.fileName, state.header, state.tools.length, state.expressions.length)}`;
+    els.fileStatus.textContent = `copied · ${fileStatusText(state.fileName, state.header, activeTools().length, toolExpressions().length)}`;
   } catch (error) {
     els.fileStatus.textContent = `Could not copy: ${error.message}`;
   }
@@ -959,13 +1341,18 @@ function saveAsFileName() {
 function markSaved(updatedText) {
   const documentData = parseFusionDocument(updatedText);
   const previousSelection = selectedExpression();
+  const previousRoot = activeRoot();
 
   state.originalText = updatedText;
-  state.header = documentData.header;
+  state.roots = documentData.roots;
   state.tools = documentData.tools;
   state.expressions = documentData.expressions;
+  state.activeRootId = previousRoot
+    ? state.roots.find((root) => root.name === previousRoot.name && root.toolType === previousRoot.toolType)?.id ?? state.roots[0]?.id ?? null
+    : state.roots[0]?.id ?? null;
+  syncActiveRoot();
   state.expandedTools = new Set([...state.expandedTools].filter((toolName) => {
-    return state.tools.some((tool) => tool.name === toolName);
+    return activeTools().some((tool) => tool.name === toolName);
   }));
 
   const nextSelection = previousSelection
@@ -974,7 +1361,9 @@ function markSaved(updatedText) {
     })
     : null;
   state.selectedId = nextSelection?.id ?? toolExpressions()[0]?.id ?? null;
-  els.fileStatus.textContent = `saved · ${fileStatusText(state.fileName, state.header, state.tools.length, state.expressions.length)}`;
+  els.fileStatus.textContent = `saved · ${fileStatusText(state.fileName, state.header, activeTools().length, toolExpressions().length)}`;
+  renderStructure();
+  renderTabs();
   renderHeader();
   renderList();
   renderEditor();
@@ -992,7 +1381,7 @@ function escapeHtml(value) {
   });
 }
 
-function handleEditorKeydown(event) {
+function handleFallbackEditorKeydown(event) {
   if (event.key !== "Tab") return;
 
   event.preventDefault();
@@ -1001,5 +1390,5 @@ function handleEditorKeydown(event) {
   const end = textarea.selectionEnd;
   textarea.value = `${textarea.value.slice(0, start)}    ${textarea.value.slice(end)}`;
   textarea.selectionStart = textarea.selectionEnd = start + 4;
-  updateSelectedExpression();
+  updateSelectedExpression(textarea.value);
 }

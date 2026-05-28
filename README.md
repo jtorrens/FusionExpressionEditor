@@ -18,3 +18,15 @@ Local web app for opening Fusion `.setting` or `.comp` files, editing a `MacroOp
 The `Header` tab lets you switch between `MacroOperator` and `GroupOperator`, and shows the header `InstanceInput`/`InstanceOutput` entries. If an item has a `Name` field, it can be edited.
 
 The `Tools` tab detects internal Tool blocks, shows their `Input` entries with `Expression = "..."`, and keeps the original positions so only edited values are replaced.
+
+The expression editor uses CodeMirror 6 with Lua highlighting loaded from ESM CDN modules, so the local app needs browser access to those modules the first time it runs.
+
+## GitHub Pages
+
+This repository includes a GitHub Actions workflow that publishes the static app from the repository root to GitHub Pages.
+
+In GitHub, open `Settings > Pages` and set `Build and deployment > Source` to `GitHub Actions`. After the next push to `main`, the app will be deployed to:
+
+```text
+https://jtorrens.github.io/FusionExpressionEditor/
+```

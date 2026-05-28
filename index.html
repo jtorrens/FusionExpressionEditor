@@ -22,12 +22,23 @@
         </div>
       </header>
 
-      <nav class="tabs" aria-label="Sections">
-        <button id="headerTabBtn" class="tab active" type="button">Header</button>
-        <button id="toolsTabBtn" class="tab" type="button">Tools</button>
-      </nav>
+      <div class="main-layout">
+        <aside id="structureBar" class="structure-bar" aria-label="Copied node structure">
+          <div class="structure-head">
+            <span class="structure-label">Structure</span>
+            <span id="structureSummary">No nodes loaded</span>
+          </div>
+          <div id="structureList" class="structure-list"></div>
+        </aside>
+        <div id="structureResizer" class="structure-resizer" role="separator" aria-orientation="vertical" title="Resize structure panel"></div>
 
-      <section id="headerView" class="header-view" aria-label="Operator header">
+        <section class="content-area">
+          <nav class="tabs" aria-label="Sections">
+            <button id="headerTabBtn" class="tab active" type="button">Header</button>
+            <button id="toolsTabBtn" class="tab" type="button">Tools</button>
+          </nav>
+
+          <section id="headerView" class="header-view" aria-label="Operator header">
         <div id="headerEmptyState" class="empty-state">
           <strong>No header loaded</strong>
           <span>Open a MacroOperator or GroupOperator to edit its header.</span>
@@ -53,9 +64,9 @@
             </section>
           </div>
         </div>
-      </section>
+          </section>
 
-      <section id="toolsView" class="workspace" aria-label="Expression editor" hidden>
+          <section id="toolsView" class="workspace" aria-label="Expression editor" hidden>
         <aside class="sidebar">
           <div class="filter-row">
             <input id="searchInput" type="search" placeholder="Filter expressions" disabled>
@@ -91,7 +102,7 @@
             <div class="expression-compare">
               <section class="expression-pane">
                 <div class="pane-title">Edited</div>
-                <textarea id="expressionEditor" spellcheck="false"></textarea>
+                <div id="expressionEditor"></div>
               </section>
               <section class="expression-pane original-pane">
                 <div class="pane-title">Original</div>
@@ -104,7 +115,9 @@
             </div>
           </div>
         </section>
-      </section>
+          </section>
+        </section>
+      </div>
     </main>
 
     <script src="./app.js"></script>
