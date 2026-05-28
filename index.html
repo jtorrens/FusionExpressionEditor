@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fusion Expression Editor</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>Fusion Expression Editor</h1>
+          <p id="fileStatus">Open a Fusion .setting file to edit its expressions.</p>
+        </div>
+        <div class="actions">
+          <button id="openPickerBtn" type="button" title="Open file">Open</button>
+          <button id="saveBtn" type="button" disabled title="Save changes">Save</button>
+          <button id="downloadBtn" type="button" disabled title="Save as copy">Save As</button>
+          <button id="copyBtn" type="button" disabled title="Copy full edited file to clipboard">Copy</button>
+          <button id="pasteBtn" type="button" title="Open text from clipboard">Paste</button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Sections">
+        <button id="headerTabBtn" class="tab active" type="button">Header</button>
+        <button id="toolsTabBtn" class="tab" type="button">Tools</button>
+      </nav>
+
+      <section id="headerView" class="header-view" aria-label="Operator header">
+        <div id="headerEmptyState" class="empty-state">
+          <strong>No header loaded</strong>
+          <span>Open a MacroOperator or GroupOperator to edit its header.</span>
+        </div>
+
+        <div id="headerState" class="header-state" hidden>
+          <div class="header-control">
+            <label for="operatorTypeSelect">Operator type</label>
+            <select id="operatorTypeSelect">
+              <option value="MacroOperator">MacroOperator</option>
+              <option value="GroupOperator">GroupOperator</option>
+            </select>
+          </div>
+
+          <div class="header-columns">
+            <section>
+              <h2>Inputs</h2>
+              <div id="headerInputs" class="header-items"></div>
+            </section>
+            <section>
+              <h2>Outputs</h2>
+              <div id="headerOutputs" class="header-items"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="toolsView" class="workspace" aria-label="Expression editor" hidden>
+        <aside class="sidebar">
+          <div class="filter-row">
+            <input id="searchInput" type="search" placeholder="Filter expressions" disabled>
+            <span id="counter">0</span>
+            <button id="replaceModeBtn" type="button" disabled title="Select expressions and replace text">Replace</button>
+          </div>
+          <div id="replacePanel" class="replace-panel" hidden>
+            <input id="replaceFindInput" type="text" placeholder="Find text">
+            <input id="replaceWithInput" type="text" placeholder="Replace with">
+            <div class="replace-actions">
+              <button id="selectVisibleBtn" type="button">Select visible</button>
+              <button id="clearSelectionBtn" type="button">Clear</button>
+              <button id="applyReplaceBtn" type="button">Apply</button>
+            </div>
+          </div>
+          <div id="expressionList" class="expression-list"></div>
+        </aside>
+
+        <section class="editor-panel">
+          <div id="emptyState" class="empty-state">
+            <strong>No file loaded</strong>
+            <span>Expressions will appear here after you open a file.</span>
+          </div>
+
+          <div id="editorState" class="editor-state" hidden>
+            <div class="editor-head">
+              <div>
+                <span id="toolName" class="meta"></span>
+                <h2 id="inputName"></h2>
+              </div>
+              <span id="dirtyBadge" class="dirty-badge" hidden>edited</span>
+            </div>
+            <div class="expression-compare">
+              <section class="expression-pane">
+                <div class="pane-title">Edited</div>
+                <textarea id="expressionEditor" spellcheck="false"></textarea>
+              </section>
+              <section class="expression-pane original-pane">
+                <div class="pane-title">Original</div>
+                <pre id="originalExpressionViewer"></pre>
+              </section>
+            </div>
+            <div class="editor-footer">
+              <span id="lineInfo"></span>
+              <button id="revertBtn" type="button">Revert expression</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
