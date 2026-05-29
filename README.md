@@ -11,9 +11,10 @@ Local web app for opening Fusion `.setting` or `.comp` files, editing a `MacroOp
    ```
 
 2. Open `http://127.0.0.1:4173/`.
-3. Use `Open` to load a file through the File System Access API. In that mode, `Save` writes to the opened file.
-4. Use `Paste` to load `.setting` text directly from the clipboard. In that mode, `Save` opens the same flow as `Save As`.
-5. Use `Save As` whenever you want to export a copy instead of overwriting the opened file.
+3. Use `Open` to load a file in read-only mode. This avoids Chrome's protected-folder restrictions for many Fusion library paths.
+4. Use `Shift + Open` only when you want to request writable access to the selected file. Chrome may block this in system or library folders.
+5. Use `Paste` to load `.setting` text directly from the clipboard. In that mode, `Save` opens the same flow as `Save As`.
+6. Use `Save As` whenever you want to export a copy instead of overwriting the opened file.
 
 The `Header` tab lets you switch between `MacroOperator` and `GroupOperator`, and shows the header `InstanceInput`/`InstanceOutput` entries. If an item has a `Name` field, it can be edited.
 

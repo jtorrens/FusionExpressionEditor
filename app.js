@@ -130,12 +130,16 @@ function currentStructurePanelWidth() {
   return els.structureBar.getBoundingClientRect().width;
 }
 
-async function openWithPicker() {
-  if (!("showOpenFilePicker" in window)) {
-    openWithFileInputFallback();
+async function openWithPicker(event) {
+  if (event?.shiftKey && "showOpenFilePicker" in window) {
+    await openWithWritablePicker();
     return;
   }
 
+  openWithFileInputFallback();
+}
+
+async function openWithWritablePicker() {
   try {
     const [handle] = await window.showOpenFilePicker({
       multiple: false,
