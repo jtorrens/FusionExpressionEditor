@@ -151,6 +151,12 @@ async function openWithPicker() {
     state.fileHandle = handle;
     await loadDocumentText(await file.text(), file.name);
   } catch (error) {
+    if (isProtectedFileSystemError(error)) {
+      els.fileStatus.textContent = "Chrome blocked direct file access for that location. Opening as read-only instead.";
+      openWithFileInputFallback();
+      return;
+    }
+
     if (error.name !== "AbortError") {
       els.fileStatus.textContent = `Could not open file: ${error.message}`;
     }
@@ -1280,6 +1286,11 @@ async function saveFile() {
     await writable.close();
     markSaved(updatedText);
   } catch (error) {
+    if (isProtectedFileSystemError(error)) {
+      els.fileStatus.textContent = "Chrome blocked saving back to that protected location. Use Save As or Copy.";
+      return;
+    }
+
     els.fileStatus.textContent = `Could not save: ${error.message}`;
   }
 }
@@ -1372,6 +1383,18 @@ function markSaved(updatedText) {
 function fileStatusText(fileName, header, toolCount, expressionCount) {
   const headerLabel = header ? `${header.operatorType} ${header.name}` : "no Header";
   return `${fileName} · ${headerLabel} · ${toolCount} tools · ${expressionCount} expressions`;
+}
+
+function isProtectedFileSystemError(error) {
+  const message = `${error.name ?? ""} ${error.message ?? ""}`.toLowerCase();
+  return [
+    "system",
+    "sensitive",
+    "blocked",
+    "not allowed",
+    "not permitted",
+    "security",
+  ].some((pattern) => message.includes(pattern));
 }
 
 function escapeHtml(value) {
